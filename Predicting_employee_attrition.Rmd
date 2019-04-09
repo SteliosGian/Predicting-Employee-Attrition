@@ -1,0 +1,446 @@
+---
+title: "Bagging in HR dataset"
+author: "Stelios Giannikis"
+---
+
+```{r}
+
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(caTools)
+library(ipred)
+library(gmodels)
+library(mlbench)
+library(caret)
+library(caretEnsemble)
+library(randomForest)
+library(ROCR)
+library(ROSE)
+library(DMwR)
+library(gbm)
+library(RColorBrewer)
+```
+
+```{r}
+
+
+
+### load the data
+### Note!!!! The name of the file was made smaller,
+### the original name is "WA_Fn-UseC_-HR-Employee-Attrition.csv""
+### Data taken from https://www.kaggle.com/pavansubhasht/ibm-hr-analytics-attrition-dataset
+hr <- read.csv("Employee-Attrition.csv")
+
+
+
+#####################################
+######## Data pre-processing ########
+#####################################
+
+### change the name of "i..Age" into "Age"
+names(hr)[1] <- "Age"
+
+
+### remove variables EmployeeCount, EmployeeNumber, Over18 and StandardHours
+### monthly/daily/hourly rate
+hr <- hr[, -c(4,9,10,13,20,22,27)]
+
+
+
+### heatmap
+hm = hr[, -c(2,3,4,7,9,11,12,14,17,21)]
+correl = cor(hm)
+
+heatmap(correl, Rowv = NA, Colv = NA, margins = c(10,1.5), col = brewer.pal(9, "Blues"), symm = TRUE)
+
+
+
+
+### turn variables into factors
+hr$Education <- factor(hr$Education, levels = c(1,2,3,4,5), labels = c("Below College", "College", "Bachelor", "Master", "Doctor"), ordered = TRUE)
+hr$EnvironmentSatisfaction <- factor(hr$EnvironmentSatisfaction, levels = c(1,2,3,4), labels = c("Low", "Medium", "High", "Very High"), ordered = TRUE)
+hr$JobInvolvement <- factor(hr$JobInvolvement, levels = c(1,2,3,4), labels = c("Low", "Medium", "High", "Very High"), ordered = TRUE)
+hr$JobSatisfaction <- factor(hr$JobSatisfaction, levels = c(1,2,3,4), labels = c("Low", "Medium", "High", "Very High"), ordered = TRUE)
+hr$PerformanceRating <- factor(hr$PerformanceRating, levels = c(1,2,3,4), labels = c("Low", "Good", "Excellent", "Outstanding"), ordered = TRUE)
+hr$RelationshipSatisfaction <- factor(hr$RelationshipSatisfaction, levels = c(1,2,3,4), labels = c("Low", "Medium", "High", "Very High"), ordered = TRUE)
+hr$WorkLifeBalance <- factor(hr$WorkLifeBalance, levels = c(1,2,3,4), labels = c("Bad", "Good", "Better", "Best"), ordered = TRUE)
+hr$StockOptionLevel <- as.factor(hr$StockOptionLevel)
+hr$JobLevel <- as.factor(hr$JobLevel)
+
+
+
+```
+
+
+Exploratory Data Analysis
+
+```{r}
+################################
+##### Exploratory Analysis #####
+################################
+
+
+summary(hr[, c(1,5,15,16,18,22,23,25,26,27,28)])
+
+
+#Function from the Programming Assignment
+summarize = function(dat){ # Make a summarizing table of the variables specified  
+  Min = lapply(dat, function(x){min(x)}) # The lowest value for each considered variable
+  Mean = lapply(dat, function(x){mean(x)}) # The highest value for each considered variable
+  Median = lapply(dat, function(x){median(x)}) # The median value for each considered variable
+  InterquartileRange = lapply(dat, function(x){IQR(x)}) # The IQR (distance between Q1 and Q3) for each considered variable
+  Max = lapply(dat, function(x){max(x)}) # The mean value for each considered variable
+  df = cbind(Min, Mean, Median, InterquartileRange, Max) # Create a data frame that combines the rows for the five values into a data frame 'df'
+  return(df) # Return the data frame 'df'
+  format.data.frame(df, dec=3) # Format the data frame to include a maximum of three decimals 
+}
+#Numerical variables
+summarize(hr[, c(1,5,15,16,18,22,23,25,26,27,28)])
+
+
+
+
+
+
+
+
+
+### Outliers were not removed
+### 8 outliers
+length(boxplot(Age ~ Attrition, data = hr)$out)
+
+### 94 outliers
+length(boxplot(MonthlyIncome ~ Attrition, data = hr)$out)
+
+### 40 outliers
+length(boxplot(NumCompaniesWorked ~ Attrition, data = hr)$out)
+
+### 1 outlier
+length(boxplot(PercentSalaryHike ~ Attrition, data = hr)$out)
+
+### 49 outliers
+length(boxplot(TotalWorkingYears ~ Attrition, data = hr)$out)
+
+### 238 outliers
+length(boxplot(TrainingTimesLastYear ~ Attrition, data = hr)$out)
+
+### 70 outliers
+length(boxplot(YearsAtCompany ~ Attrition, data = hr)$out)
+
+### 24 outliers
+length(boxplot(YearsAtCompany ~ Attrition, data = hr)$out)
+
+### 70 outliers
+length(boxplot(YearsInCurrentRole ~ Attrition, data = hr)$out)
+
+### 129 outliers
+length(boxplot(YearsSinceLastPromotion ~ Attrition, data = hr)$out)
+
+### 16 outliers
+length(boxplot(YearsWithCurrManager ~ Attrition, data = hr)$out)
+```
+
+
+
+Bagging
+
+```{r}
+
+#########################################
+########### Split the data ##############
+#########################################
+set.seed(1)
+split <- sample.split(hr$Attrition, SplitRatio = 0.75)
+train <- subset(hr, split == TRUE)
+test <- subset(hr, split == FALSE)
+
+
+
+#######################################################################
+### bagging with randomForest function and m = number of predictors ###
+#######################################################################
+set.seed(1)
+bagged_tree <- randomForest(Attrition ~ ., data = train, mtry = 27, ntree = 1000, importance =TRUE)
+prob_bagged <- predict(bagged_tree, newdata = test, type = "prob")
+prob_bagged_roc <- prob_bagged
+pred_bagged <- ifelse(prob_bagged[,2] > 0.5, "Yes", "No")
+table(pred_bagged, test$Attrition)
+
+mean(bagged_tree$err.rate)
+
+
+
+############ ROC CURVE ##################
+
+roc.curve(test$Attrition, prob_bagged_roc[,2])
+
+### F = 0.177
+accuracy.meas(response = test$Attrition, predicted = prob_bagged_roc[,2])
+
+### 13.9% test error rate
+round(mean(pred_bagged != test$Attrition)*100, digits = 2)
+
+
+```
+
+```{r}
+###########################################
+############# Oversampling ################
+###########################################
+
+
+data_balanced_over <- ovun.sample(Attrition ~ .,
+                                  data = train,
+                                  method = "over",
+                                  seed = 1)$data
+
+table(data_balanced_over$Attrition)
+set.seed(1)
+over_tree <- randomForest(Attrition ~ ., data = data_balanced_over, mtry = 27, ntree = 1000, importance =TRUE)
+
+over_prob <- predict(over_tree, newdata = test, type = "prob")
+over_pred <- ifelse(over_prob[,2] > 0.5, "Yes", "No")
+table(over_pred, test$Attrition)
+table(data_balanced_over$Attrition)
+
+
+
+
+### AUC = 0.770, F = 0.258
+roc.curve(test$Attrition, over_prob[,2])
+accuracy.meas(test$Attrition, over_prob[,2])
+
+
+
+######## create ggplot of variable importance ################
+imp <- varImpPlot(over_tree, class = Attrition)
+imp <- as.data.frame(imp)
+imp <- imp[order(imp[,1], decreasing = TRUE), ]
+imp$varnames <- rownames(imp)
+rownames(imp) <- NULL
+imp <- imp[1:6,]
+ggplot(imp, aes(x = reorder(varnames, MeanDecreaseAccuracy), weight = MeanDecreaseAccuracy)) +
+  geom_bar() +
+  coord_flip() +
+  ylab("Mean Decrease Accuracy") +
+  xlab("Variable Name")
+
+ggplot(imp, aes(x = reorder(varnames, MeanDecreaseGini), weight = MeanDecreaseGini)) +
+  geom_bar() +
+  coord_flip() +
+  ylab("MeanDecreaseGini") +
+  xlab("Variable Name")
+
+
+
+
+
+
+##############################################
+################ Undersampling ###############
+##############################################
+
+data_balanced_under <- ovun.sample(Attrition ~ ., data = train, method = "under", seed = 1)$data
+
+table(data_balanced_under$Attrition)
+set.seed(1)
+under_tree <- randomForest(Attrition ~ ., data = data_balanced_under, mtry = 27, ntree = 1000, importance =TRUE)
+
+under_prob <- predict(under_tree, newdata = test, type = "prob")
+
+### auc = 0.770, F = 0.258
+roc.curve(test$Attrition, over_prob[,2])
+accuracy.meas(test$Attrition, over_prob[,2])
+
+
+
+
+
+
+#########################################
+############### both ####################
+#########################################
+
+data_balanced_both <- ovun.sample(Attrition ~ ., data = train, method = "both", p = 0.5, seed = 1)$data
+table(data_balanced_both$Attrition)
+
+set.seed(1)
+both_tree <- randomForest(Attrition ~ ., data = data_balanced_both, mtry = 27, ntree = 1000, importance =TRUE)
+both_prob <- predict(both_tree, newdata = test, type = "prob")
+
+### AUC = 0.759, F = 0.252
+roc.curve(test$Attrition, both_prob[,2])
+accuracy.meas(test$Attrition, both_prob[,2])
+
+
+
+################ AUC values for different sampling techniques #############################
+round(c(Oversampling = roc.curve(test$Attrition, over_prob[,2], plotit = F)[[2]], Undersampling = roc.curve(test$Attrition, over_prob[,2], plotit = F)[[2]], Both = roc.curve(test$Attrition, both_prob[,2], plotit = F)[[2]], Normal = roc.curve(test$Attrition, prob_bagged_roc[,2], plotit = F)[[2]]), digits = 3)
+
+#######################################
+##### CART TREE with oversampling #####
+#######################################
+
+tree <- rpart(Attrition ~ ., data = data_balanced_over, method = "class")
+tree_prob <- predict(tree, test, type = "prob")
+### auc = 0.688, F = 0.205
+tree_pred <- ifelse(tree_prob[,2] > 0.5, "Yes", "No")
+table(test$Attrition, tree_pred)
+mean(test$Attrition != tree_pred)
+roc.curve(test$Attrition, tree_prob[,2])
+accuracy.meas(test$Attrition, tree_prob[,2])
+prp(tree, type = 2, box.palette = "Grays", cex = 0.6)
+
+
+```
+
+Boosting
+
+```{r}
+######### turn to 0 and 1 for the gbm function
+y_boost <- factor(data_balanced_over$Attrition, levels = c("Yes", "No"), labels = c(1,0))
+boost_data <- cbind(y_boost, data_balanced_over[,-2])
+names(boost_data)[1] <- "Attrition"
+boost_data$Attrition <- as.character(boost_data$Attrition)
+
+set.seed(1)
+boost <- gbm(Attrition ~ ., data = boost_data, n.trees = 5000, interaction.depth = 1, cv.folds = 10)
+
+
+
+############## find best n.trees for prediction
+############## n.trees = 326
+auc <- NULL
+for (i in seq(50, 1000)){
+boost_prob <- predict(boost, newdata = test, n.trees = i, type = "response")
+#boost_pred <- ifelse(boost_prob > 0.5, "Yes","No")
+auc[i] <- roc.curve(test$Attrition, boost_prob, plotit = FALSE)[[2]]
+}
+auc[is.na(auc)] <- 0
+auc <- round(auc, digits = 3)
+### fing the max auc value
+max(auc)
+### find the index of the highest auc value
+which.max(auc)
+
+######### predict on test set
+boost_prob_main <- predict(boost, test, n.trees = 326, type = "response")
+boost_pred_main <- ifelse(boost_prob_main > 0.5, "Yes","No")
+roc.curve(test$Attrition, boost_prob_main)
+table(boost_pred_main, test$Attrition)
+accuracy.meas(test$Attrition, boost_prob_main)
+      
+########### split for new data sets
+split_data <- sample(1:3, size = nrow(hr), replace = TRUE, prob = c(0.2, 0.4, 0.4) )
+test1 <- subset(hr, split_data == 1)
+test2 <- subset(hr, split_data == 2)
+test3 <- subset(hr, split_data == 3)
+
+###### test1 data
+set.seed(1)
+boost_prob <- predict(boost, test1, n.trees = 326, type = "response")
+boost_pred <- ifelse(boost_prob > 0.5, "Yes","No")
+roc.curve(test1$Attrition, boost_prob)
+accuracy.meas(test1$Attrition, boost_prob)
+table(boost_pred, test1$Attrition)
+
+###### test2 data
+boost_prob <- predict(boost, test2, n.trees = 326, type = "response")
+boost_pred <- ifelse(boost_prob > 0.5, "Yes","No")
+roc.curve(test2$Attrition, boost_prob)
+accuracy.meas(test2$Attrition, boost_prob)
+table(boost_pred, test2$Attrition)
+
+###### test3 data
+boost_prob <- predict(boost, test3, n.trees = 326, type = "response")
+boost_pred <- ifelse(boost_prob > 0.5, "Yes","No")
+roc.curve(test3$Attrition, boost_prob)
+accuracy.meas(test3$Attrition, boost_prob)
+table(boost_pred, test3$Attrition)
+
+
+#### best interaction.depth = 1
+#### this function takes time
+#auc_val <- NULL
+#for (i in 1:20){
+#  boost <- gbm(Attrition ~ ., data = boost_data, n.trees = 5000, interaction.depth = i)
+#  boost_prob <- predict(boost, newdata = test, n.trees = 5000, type = "response")
+#  boost_pred <- ifelse(boost_prob > 0.5, "Yes","No")
+#  auc_val[i] <- roc.curve(test$Attrition, boost_pred, plotit = FALSE)[[2]]
+#}
+#plot(y = auc_val, x = 1:20, type = "b")
+
+
+
+
+```
+
+
+Results
+
+```{r}
+roc.curve(test$Attrition, over_prob[,2], lty = 1, col = "red")
+roc.curve(test$Attrition, boost_prob_main, add.roc = TRUE, lty = 2, col = "blue")
+legend("bottomright", legend = c("Bagging", "Boosting"), col = c("red", "blue"), lty = 1:2, cex = 1)
+
+mean(test$Attrition != over_pred)
+mean(test$Attrition != boost_pred_main)
+
+table(test$Attrition, over_pred)
+table(test$Attrition, boost_pred_main)
+
+
+### boosting plot
+par(mar = c(3,8,5,4))
+summary(boost, cBars = 6, method = relative.influence, las = 2)
+
+### bagging plot
+ggplot(imp, aes(x = reorder(varnames, MeanDecreaseAccuracy), weight = MeanDecreaseAccuracy)) +
+  geom_bar() +
+  coord_flip() +
+  ylab("Mean Decrease Accuracy") +
+  xlab("Variable Name")
+
+
+### Mode function
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+### Sales Executive
+getmode(subset(test$JobRole, test$Attrition == "Yes"))
+
+### 0 stock option level
+getmode(subset(test$StockOptionLevel, test$Attrition == "Yes"))
+
+### Overtime = No
+getmode(subset(test$OverTime, test$Attrition == "Yes"))
+
+### median monthly income 3485
+median(subset(test$MonthlyIncome, test$Attrition == "Yes"))
+
+### Age = 31
+median(subset(test$Age, test$Attrition == "Yes"))
+
+### Logistic Regression on the oversampled training data set
+logist <- glm(Attrition ~ ., data = data_balanced_over, family = "binomial")
+
+log_prob <- predict(logist, newdata = test, type = "response")
+
+log_pred <- ifelse(log_prob > 0.5, "Yes", "No")
+table(test$Attrition, log_pred)
+mean(log_pred != test$Attrition)
+roc.curve(test$Attrition, log_prob)
+summary(logist)
+```
+
+
+
+
+
+
+
+
+
